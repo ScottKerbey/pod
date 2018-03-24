@@ -48,7 +48,7 @@ parser.add_argument(
     help='Base directory for the model.')
 
 parser.add_argument(
-    '--model_type', type=str, default='wide_deep',
+    '--model_type', type=str,
     help="Valid model types: {'wide', 'deep', 'wide_deep'}.")
 
 parser.add_argument(
@@ -74,6 +74,10 @@ parser.add_argument(
     help='Path to the test data.')
 
 parser.add_argument(
+    '--train', default=False, action='store_const', const=True,
+)
+
+parser.add_argument(
     '--predict', default=False, action='store_const', const=True,
 )
 
@@ -85,16 +89,16 @@ _NUM_EXAMPLES = {
 def build_model_columns():
   """Builds a set of wide and deep feature columns."""
   # Continuous columns
-  age = tf.feature_column.numeric_column('age', default_value=18)
+  age = tf.feature_column.numeric_column('age', default_value=40)
   unsecured_lines = tf.feature_column.numeric_column('RevolvingUtilizationOfUnsecuredLines', default_value=0)
   times_past_due_3059 = tf.feature_column.numeric_column('NumberOfTime30-59DaysPastDueNotWorse', default_value=0)
   times_past_due_6089 = tf.feature_column.numeric_column('NumberOfTime60-89DaysPastDueNotWorse', default_value=0)
   times_90_days_late = tf.feature_column.numeric_column('NumberOfTimes90DaysLate', default_value=0)
-  debt_ratio = tf.feature_column.numeric_column('DebtRatio', default_value=5)
-  monthly_income = tf.feature_column.numeric_column('MonthlyIncome', default_value=4000)
+  debt_ratio = tf.feature_column.numeric_column('DebtRatio', default_value=0.5)
+  monthly_income = tf.feature_column.numeric_column('MonthlyIncome', default_value=8000)
   open_credit_lines = tf.feature_column.numeric_column('NumberOfOpenCreditLinesAndLoans', default_value=0)
   num_real_estate_loans = tf.feature_column.numeric_column('NumberRealEstateLoansOrLines', default_value=0)
-  num_dependents = tf.feature_column.numeric_column('NumberOfDependents', default_value=2)
+  num_dependents = tf.feature_column.numeric_column('NumberOfDependents', default_value=1)
 
   # Transformations.
   age_buckets = tf.feature_column.bucketized_column(
@@ -107,10 +111,12 @@ def build_model_columns():
   ]
 
   crossed_columns = [
-      # tf.feature_column.crossed_column(
-      #     ['education', 'occupation'], hash_bucket_size=1000),
-      # tf.feature_column.crossed_column(
-      #     [age_buckets, 'education', 'occupation'], hash_bucket_size=1000),
+      tf.feature_column.crossed_column(
+          ['DebtRatio', 'MonthlyIncome'], hash_bucket_size=1000),
+      tf.feature_column.crossed_column(
+          ['NumberOfDependents', 'MonthlyIncome'], hash_bucket_size=1000),
+      tf.feature_column.crossed_column(
+          [age_buckets, 'NumberOfOpenCreditLinesAndLoans'], hash_bucket_size=1000),
   ]
 
   wide_columns = base_columns + crossed_columns
@@ -219,7 +225,19 @@ def input_fn(data_file, num_epochs, shuffle, batch_size):
 
 def main(unused_argv):
 
-  if not FLAGS.predict:
+  if not FLAGS.train and not FLAGS.predict:
+      print('No training or prediction called')
+      return
+
+  if FLAGS.train:
+
+      if not FLAGS.model_type:
+          FLAGS.model_type = 'wide_deep'
+
+      prev = open('model.txt','w')
+      prev.write(FLAGS.model_type)
+      prev.close()
+
       # Clean up the model directory if present
       shutil.rmtree(FLAGS.model_dir, ignore_errors=True)
       model = build_estimator(FLAGS.model_dir, FLAGS.model_type)
@@ -239,25 +257,31 @@ def main(unused_argv):
         for key in sorted(results):
           print('%s: %s' % (key, results[key]))
 
-  if FLAGS.predict:
+  else:
+      if not FLAGS.model_type:
+          prev = open('model.txt','r')
+          FLAGS.model_type = prev.read()
+          prev.close()
+
       model = load_estimator(FLAGS.model_dir, FLAGS.model_type)#, FLAGS.model_file)
 
-  predictions = model.predict(input_fn=lambda: input_fn(
-      FLAGS.test_data, 1, False, FLAGS.batch_size))
+  if FLAGS.predict:
+      predictions = model.predict(input_fn=lambda: input_fn(
+          FLAGS.test_data, 1, False, FLAGS.batch_size))
 
-  print('-' * 60)
-  print('Predictions')
-  print('-' * 60)
+      print('-' * 60)
+      print('Predictions')
+      print('-' * 60)
 
-  writer = open('output.csv', 'w')
-  writer.write('Id,Probability\n')
-  i = 1
-  for value in predictions:
-    print('%s,%s' % (i, str(value['logistic'])[1:-1]))
-    writer.write('%s,%s\n' % (i, str(value['logistic'])[1:-1]))
-    i = i + 1
+      writer = open('output.csv', 'w')
+      writer.write('Id,Probability\n')
+      i = 1
+      for value in predictions:
+        print('%s,%s' % (i, str(value['logistic'])[1:-1]))
+        writer.write('%s,%s\n' % (i, str(value['logistic'])[1:-1]))
+        i = i + 1
 
-  writer.close()
+      writer.close()
 
 if __name__ == '__main__':
   tf.logging.set_verbosity(tf.logging.INFO)
